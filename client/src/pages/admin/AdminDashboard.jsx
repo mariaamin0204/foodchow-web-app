@@ -498,17 +498,14 @@
 
 
 
-
 import React, { useState, useEffect } from 'react';
-import { db } from '../firebase/config'; // Direct Firestore Import
+import { db } from '../firebase/config';
 import { 
   collection, 
   onSnapshot, 
   doc, 
   updateDoc, 
-  deleteDoc, 
-  query, 
-  orderBy 
+  deleteDoc 
 } from 'firebase/firestore';
 
 const AdminDashboard = () => {
@@ -517,37 +514,40 @@ const AdminDashboard = () => {
   const [selectedDay, setSelectedDay] = useState('Mon');
   const [loading, setLoading] = useState(true);
 
-  // ✅ Firebase Firestore se SAB CUSTOMERS ke REAL-TIME orders load karein
+  // ✅ Firebase Firestore Real-Time Orders Fetch (Without Rigid Query Blockers)
   useEffect(() => {
     setLoading(true);
     const ordersRef = collection(db, 'orders');
 
-    // Simple Direct Query without rigid sorting blocker
-    const unsubscribe = onSnapshot(ordersRef, (snapshot) => {
-      const liveOrders = snapshot.docs.map((docSnap) => ({
-        id: docSnap.id,
-        ...docSnap.data()
-      }));
-      
-      // In-memory JavaScript sorting (Newest orders first)
-      liveOrders.sort((a, b) => {
-        const timeA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
-        const timeB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
-        return timeB - timeA;
-      });
+    const unsubscribe = onSnapshot(
+      ordersRef,
+      (snapshot) => {
+        const liveOrders = snapshot.docs.map((docSnap) => ({
+          id: docSnap.id,
+          ...docSnap.data()
+        }));
 
-      console.log("Live Orders Fetched Successfully:", liveOrders);
-      setOrders(liveOrders);
-      setLoading(false);
-    }, (error) => {
-      console.error("Firestore Read Error:", error);
-      setLoading(false);
-    });
+        // Javascript sorting for newest orders first
+        liveOrders.sort((a, b) => {
+          const timeA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+          const timeB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+          return timeB - timeA;
+        });
+
+        console.log("All Customer Orders Fetched:", liveOrders);
+        setOrders(liveOrders);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Firestore Orders Fetch Error:", error);
+        setLoading(false);
+      }
+    );
 
     return () => unsubscribe();
   }, []);
 
-  // ✅ Firestore mein Order Status Update Karein
+  // ✅ Status Update Handler
   const handleStatusChange = async (orderId, newStatus) => {
     try {
       const orderDocRef = doc(db, 'orders', orderId);
@@ -558,7 +558,7 @@ const AdminDashboard = () => {
     }
   };
 
-  // ✅ Firestore se Order Delete Karein
+  // ✅ Delete Order Handler
   const handleDeleteOrder = async (orderId) => {
     if (window.confirm('Kya aap is order ko permanently delete karna chahte hain?')) {
       try {
@@ -571,19 +571,21 @@ const AdminDashboard = () => {
     }
   };
 
-  // Live Calculated Stats
-  const totalRevenue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
-  
-  // Case-Insensitive Matching
+  // Live Stats Calculations
+  const totalRevenue = orders.reduce((sum, order) => sum + Number(order.totalAmount || order.price || order.amount || 0), 0);
+
+  // Filter Matching (Case-Insensitive with Default Fallback)
   const filteredOrders = filter === 'All' 
     ? orders 
-    : orders.filter((order) => order.status?.toLowerCase() === filter.toLowerCase());
+    : orders.filter((order) => {
+        const currentStatus = (order.status || 'Pending').toLowerCase();
+        return currentStatus === filter.toLowerCase();
+      });
 
-  // Top Analytics Summary Cards
   const topStats = [
     {
       title: 'Sells Graph',
-      value: totalRevenue > 0 ? `Rs. ${totalRevenue.toFixed(2)}` : '\$8,451',
+      value: totalRevenue > 0 ? `Rs. ${totalRevenue.toFixed(2)}` : 'Rs. 0.00',
       percentage: '↑ 3.2%',
       isPositive: true,
       strokeColor: '#000000',
@@ -892,7 +894,7 @@ const AdminDashboard = () => {
         </div>
       </div>
 
-      {/* 5. RECENTLY PLACED LIVE ORDERS TABLE */}
+      {/* 5. RECENTLY PLACED LIVE CUSTOMER ORDERS TABLE */}
       <div className="bg-white p-6 rounded-lg border border-gray-100 shadow-sm">
         <h3 className="font-bold text-xs uppercase tracking-wider text-black mb-6">
           RECENTLY PLACED ORDERS ({filteredOrders.length})
@@ -917,53 +919,62 @@ const AdminDashboard = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 font-medium">
-                {filteredOrders.map((order) => (
-                  <tr key={order.id} className="hover:bg-gray-50 transition">
-                    <td className="py-3 font-bold text-black">{order.orderId || order.id}</td>
-                    <td className="py-3 text-gray-900 font-bold">
-                      {order.customerName || order.name || order.userEmail || 'Guest'}
-                    </td>
-                    <td className="py-3 text-gray-600">
-                      <div>{order.phone || 'N/A'}</div>
-                      <div className="text-[10px] text-gray-400">
-                        {order.address || ''} {order.city ? `, ${order.city}` : ''}
-                      </div>
-                    </td>
-                    <td className="py-3 text-gray-700">
-                      {order.items?.map((it, idx) => (
-                        <div key={idx}>{it.name || it.title} x{it.quantity || 1}</div>
-                      )) || 'Food Items'}
-                    </td>
-                    <td className="py-3">
-                      <select
-                        value={order.status || 'Pending'}
-                        onChange={(e) => handleStatusChange(order.id, e.target.value)}
-                        className={`text-[11px] font-bold px-2.5 py-1 rounded-md text-white outline-none cursor-pointer ${
-                          order.status === 'Completed' || order.status === 'Delivered'
-                            ? 'bg-emerald-600'
-                            : order.status === 'Processing'
-                            ? 'bg-blue-600'
-                            : 'bg-amber-500'
-                        }`}
-                      >
-                        <option value="Pending" className="bg-white text-black">Pending</option>
-                        <option value="Processing" className="bg-white text-black">Processing</option>
-                        <option value="Completed" className="bg-white text-black">Completed</option>
-                      </select>
-                    </td>
-                    <td className="py-3 text-center font-bold text-red-600">
-                      Rs. {order.totalAmount || order.price || 0}
-                    </td>
-                    <td className="py-3 text-right">
-                      <button
-                        onClick={() => handleDeleteOrder(order.id)}
-                        className="text-red-500 hover:text-red-700 font-bold px-2 py-1 bg-red-50 rounded border border-red-100 transition"
-                      >
-                        🗑️ Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {filteredOrders.map((order) => {
+                  const orderId = order.orderId || order.id || 'N/A';
+                  const customerName = order.customerName || order.name || order.userEmail || order.email || 'Customer';
+                  const phone = order.phone || order.phoneNumber || 'N/A';
+                  const address = order.address ? `${order.address}${order.city ? ', ' + order.city : ''}` : 'N/A';
+                  const currentStatus = order.status || 'Pending';
+                  const totalAmount = order.totalAmount || order.amount || order.price || 0;
+
+                  return (
+                    <tr key={order.id} className="hover:bg-gray-50 transition border-b">
+                      <td className="py-3 font-bold text-black">{orderId}</td>
+                      <td className="py-3 text-gray-900 font-bold">{customerName}</td>
+                      <td className="py-3 text-gray-600">
+                        <div>{phone}</div>
+                        <div className="text-[10px] text-gray-400">{address}</div>
+                      </td>
+                      <td className="py-3 text-gray-700">
+                        {Array.isArray(order.items) && order.items.length > 0 ? (
+                          order.items.map((it, idx) => (
+                            <div key={idx}>{it.name || it.title || 'Item'} x{it.quantity || 1}</div>
+                          ))
+                        ) : (
+                          <div>{order.itemNames || 'Food Items'}</div>
+                        )}
+                      </td>
+                      <td className="py-3">
+                        <select
+                          value={currentStatus}
+                          onChange={(e) => handleStatusChange(order.id, e.target.value)}
+                          className={`text-[11px] font-bold px-2.5 py-1 rounded-md text-white outline-none cursor-pointer ${
+                            currentStatus.toLowerCase() === 'completed' || currentStatus.toLowerCase() === 'delivered'
+                              ? 'bg-emerald-600'
+                              : currentStatus.toLowerCase() === 'processing'
+                              ? 'bg-blue-600'
+                              : 'bg-amber-500'
+                          }`}
+                        >
+                          <option value="Pending" className="bg-white text-black">Pending</option>
+                          <option value="Processing" className="bg-white text-black">Processing</option>
+                          <option value="Completed" className="bg-white text-black">Completed</option>
+                        </select>
+                      </td>
+                      <td className="py-3 text-center font-bold text-red-600">
+                        Rs. {totalAmount}
+                      </td>
+                      <td className="py-3 text-right">
+                        <button
+                          onClick={() => handleDeleteOrder(order.id)}
+                          className="text-red-500 hover:text-red-700 font-bold px-2 py-1 bg-red-50 rounded border border-red-100 transition"
+                        >
+                          🗑️ Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
