@@ -521,28 +521,27 @@ const AdminDashboard = () => {
   useEffect(() => {
     setLoading(true);
     const ordersRef = collection(db, 'orders');
-    
-    // Purani se nayi list sorting ke saath fetch query
-    const q = query(ordersRef, orderBy('createdAt', 'desc'));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    // Simple Direct Query without rigid sorting blocker
+    const unsubscribe = onSnapshot(ordersRef, (snapshot) => {
       const liveOrders = snapshot.docs.map((docSnap) => ({
         id: docSnap.id,
         ...docSnap.data()
       }));
+      
+      // In-memory JavaScript sorting (Newest orders first)
+      liveOrders.sort((a, b) => {
+        const timeA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+        const timeB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+        return timeB - timeA;
+      });
+
+      console.log("Live Orders Fetched Successfully:", liveOrders);
       setOrders(liveOrders);
       setLoading(false);
     }, (error) => {
-      console.error("Firestore Orders Fetch Error:", error);
-      // Fallback agar createdAt field na ho
-      onSnapshot(ordersRef, (snap) => {
-        const liveOrders = snap.docs.map((docSnap) => ({
-          id: docSnap.id,
-          ...docSnap.data()
-        }));
-        setOrders(liveOrders);
-        setLoading(false);
-      });
+      console.error("Firestore Read Error:", error);
+      setLoading(false);
     });
 
     return () => unsubscribe();
